@@ -1,6 +1,6 @@
 FROM openshift/base-centos7
 
-MAINTAINER Lorenz Bischof <bischof@puzzle.ch>
+MAINTAINER Sayeedch 
 
 ENV LOGSTASH_VERSION=2.3.0 \
     ELASTICSEARCH_SERVICE_HOST=elasticsearch
