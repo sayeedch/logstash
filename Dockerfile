@@ -1,32 +1,79 @@
-FROM openshift/base-centos7
+FROM centos:7
+LABEL maintainer sayeedch
 
-MAINTAINER Sayeedch 
+# Path to latest Logstash version
+ENV LS_PATH=https://artifacts.elastic.co/downloads/logstash/logstash-5.5.2.tar.gz
+    X_PACK=https://artifacts.elastic.co/downloads/packs/x-pack/x-pack-5.5.2.zip
 
-ENV LOGSTASH_VERSION=5.5.2 \
-    ELASTICSEARCH_SERVICE_HOST=elasticsearch
+ENV LOGSTASH_HOME=/opt/logstash
+
+# Use the appropriate Logstash and X-Pack versions
+ENV LOGSTASH_VERSION=5.5.2 
+ENV ELASTICSEARCH_SERVICE_HOST=elasticsearch 
+ENV X_PACK_VERSION=5.5.2
+
+# Install Java and the "which" command, which is needed by Logstash's shell
+# scripts.
+RUN yum update -y && yum install -y java-1.8.0-openjdk-devel which && \
+    yum clean all
+
+
+# Addd path to Logstash 
+ENV PATH=${LOGSTASH_HOME}/bin:$PATH
+
+USER root
+
+#COPY logstash-5.5.2.tar.gz /opt
+#COPY x-pack-5.5.2.zip /opt
+    
 
 LABEL io.k8s.description="Logstash" \
       io.k8s.display-name="logstash ${LOGSTASH_VERSION}" \
       io.openshift.expose-services="8080:http" \
       io.openshift.tags="logstash,${LOGSTASH_VERSION},elk"
 
+
+RUN mkdir -p /opt/
+
+# Add Logstash 
+# Move contents of logstash-version folder to ${LOGSTASH_HOME}
+# Change directory ownership to Logstash user 
+# Remove tar file
+
+RUN  curl -O $(LS_PATH) && \
+  tar zxvf /opt/logstash-${LOGSTASH_VERSION}.tar.gz -C /opt && \
+  mv /opt/logstash-${LOGSTASH_VERSION}/ ${LOGSTASH_HOME} && \
+#  chown --recursive logstash:logstash ${LOGSTASH_HOME}/ && \
+#  ln -s ${LOGSTASH_HOME} /opt/logstash 
+  rm -f /opt/logstash-${LOGSTASH_VERSION}.tar.gz 
+
+# Provide a non-root user to run the process.
+RUN groupadd --gid 1000 logstash && \
+    adduser --uid 1000 --gid 1000 \
+      --home-dir ${LOGSTASH_HOME} --no-create-home \
+      logstash
+
+
+# Provide a minimal configuration, so that simple invocations will provide
+#ADD config/logstash.yml config/log4j2.properties ${LOGSTASH_HOME}/config/
+ADD pipeline/logstash.conf ${LOGSTASH_HOME}/pipeline/logstash.conf
+RUN chmod -R 777 ${LOGSTASH_HOME}
+#RUN chown --recursive logstash:logstash ${LOGSTASH_HOME}/config/ ${LOGSTASH_HOME}/pipeline/
+
+# Ensure Logstash gets a UTF-8 locale by default.
+ENV LANG='en_US.UTF-8' LC_ALL='en_US.UTF-8'
+
+# Set user to Logstash
+USER 1000
+
+# Download and install X-Pack for Logstash
 RUN \
-  rpm --rebuilddb && yum clean all && \
-  yum install -y tar java-1.8.0-openjdk openssl && \
-  cd /opt/app-root && \
-  ##curl -O https://download.elasticsearch.org/logstash/logstash/logstash-${LOGSTASH_VERSION}.tar.gz && \
-  curl -O https://artifacts.elastic.co/downloads/logstash/logstash-${LOGSTASH_VERSION}.tar.gz && \
-  tar zxvf logstash-${LOGSTASH_VERSION}.tar.gz -C /opt/app-root --strip-components=1 && \
-  rm -f logstash-${LOGSTASH_VERSION}.tar.gz && \
-  yum clean all -y
+  curl -o ${X_PACK} && \
+  cd ${LOGSTASH_HOME} && logstash-plugin install x-pack && \
+  rm x-pack-${X_PACK_VERSION}.zip
 
-# Copy the S2I scripts to /usr/libexec/s2i, since openshift/base-centos7 image sets io.openshift.s2i.scripts-url label that way, or update that label
-COPY ./.s2i/bin/ /usr/libexec/s2i
+WORKDIR ${LOGSTASH_HOME}
 
-# Drop the root user and make the content of /opt/app-root owned by user 1001
-# RUN chown -R 1001:1001 /opt/app-root
+ENTRYPOINT [ "bin/logstash", "-f pipeline/logstash.conf" ]
 
-# This default user is created in the openshift/base-centos7 image
-# USER 1001
-
-CMD ["/usr/libexec/s2i/usage"]
+EXPOSE 9600 5044
